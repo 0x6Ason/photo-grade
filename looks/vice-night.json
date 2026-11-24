@@ -1,0 +1,8 @@
+{
+  "name": "vice-night",
+  "base": "gta6",
+  "description": "GTA VI after dark: violet-magenta skies over warm gold city lights.",
+  "best_for": "blue hour, night skylines, dusk cityscapes",
+  "hsl": {"blue": [60, -20, -10], "aqua": [40, 0, 0], "purple": [15, 10, 0]},
+  "color_grade": {"global": [300, 45, 0], "shadows": [255, 25, 8], "highlights": [330, 20, -8]}
+}

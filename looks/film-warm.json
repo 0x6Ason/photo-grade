@@ -1,0 +1,16 @@
+{
+  "name": "film-warm",
+  "description": "Portra-style warm film: soft roll-off, lifted blacks, glowing skin, gentle greens, fine grain.",
+  "best_for": "portraits, people, lifestyle, indoor, summer days",
+  "auto": {"exposure": true, "wb": true},
+  "exposure": 0.08, "contrast": -10, "highlights": -40, "shadows": 22, "whites": -8, "blacks": 6,
+  "temperature": 7, "tint": 3, "vibrance": -4, "saturation": -8,
+  "curve": [[0, 24], [64, 70], [128, 131], [192, 194], [255, 244]],
+  "hsl": {
+    "red": [6, -10, 4], "orange": [4, -4, 10], "yellow": [-12, -18, 4], "green": [25, -38, -4],
+    "aqua": [-5, -15, 0], "blue": [-10, -22, 6], "purple": [0, -15, 0], "magenta": [0, -15, 0]
+  },
+  "color_grade": {"shadows": [200, 12, 0], "highlights": [45, 16, 0]},
+  "grain": {"amount": 22, "size": 1.4},
+  "protect_skin": 0.4, "sharpness": 20
+}

@@ -1,0 +1,18 @@
+{
+  "name": "teal-orange",
+  "description": "Blockbuster cinematic: teal shadows and skies, warm skin and highlights, deep contrast.",
+  "best_for": "daylight cityscapes, travel, landscapes with sky, action",
+  "auto": {"exposure": true, "wb": true},
+  "contrast": 24, "highlights": -32, "shadows": 14, "whites": 6, "blacks": -14,
+  "vibrance": 12, "saturation": -6, "clarity": 10, "dehaze": 6,
+  "hsl": {
+    "red": [8, 0, 0], "orange": [-4, 14, 8], "yellow": [-25, -25, 0], "green": [45, -45, -18],
+    "aqua": [8, 18, -5], "blue": [-18, 12, -12], "purple": [-20, -20, 0], "magenta": [-10, -25, 0]
+  },
+  "color_grade": {"shadows": [192, 38, -4], "midtones": [200, 6, 0], "highlights": [36, 28, 0]},
+  "curve": [[0, 6], [60, 52], [128, 128], [196, 204], [255, 252]],
+  "protect_skin": 0.7, "sharpness": 30,
+  "local": [
+    {"mask": "sky", "adjust": {"highlights": -20, "hsl": {"blue": [-30, 10, -10]}}}
+  ]
+}

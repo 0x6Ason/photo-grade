@@ -1,0 +1,8 @@
+numpy
+pillow
+opencv-python-headless>=4.8
+onnxruntime
+ncnn
+# optional
+pillow-heif   # .heic / .heif input (iPhone originals)
+rawpy         # camera RAW input (.dng .cr2 .cr3 .nef .arw .raf ...)

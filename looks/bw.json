@@ -1,0 +1,12 @@
+{
+  "name": "bw",
+  "description": "Punchy black and white with a red-filter mix: dark skies, bright skin, crisp detail, film grain.",
+  "best_for": "overcast, architecture, street, portraits with character, harsh light",
+  "auto": {"exposure": true, "wb": false},
+  "bw": true,
+  "bw_mix": {"red": 25, "orange": 18, "yellow": 5, "green": -10, "aqua": -25, "blue": -45, "purple": -10, "magenta": 10},
+  "contrast": 30, "highlights": -25, "shadows": 10, "whites": 15, "blacks": -20, "clarity": 18, "texture": 10,
+  "curve": [[0, 4], [64, 56], [128, 128], [192, 202], [255, 255]],
+  "grain": {"amount": 20, "size": 1.2},
+  "vignette": {"amount": -15}, "sharpness": 30
+}

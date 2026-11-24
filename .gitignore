@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+graded/
+*_compare.jpg
+*_sheet.jpg
+*_masks.jpg

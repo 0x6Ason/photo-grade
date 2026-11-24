@@ -1,0 +1,16 @@
+{
+  "name": "classic-chrome",
+  "description": "Muted documentary film (Fuji Classic Chrome feel): restrained colour, firm shadows, cool-cyan blues.",
+  "best_for": "street, documentary, urban, overcast, travel",
+  "auto": {"exposure": true, "wb": true},
+  "contrast": 14, "highlights": -22, "shadows": -6, "blacks": -6,
+  "saturation": -20, "vibrance": 0, "clarity": 8,
+  "curve": [[0, 8], [64, 58], [128, 128], [192, 200], [255, 250]],
+  "hsl": {
+    "red": [0, -12, 0], "orange": [2, -8, 4], "yellow": [-10, -35, 0], "green": [15, -40, -10],
+    "aqua": [0, -10, 0], "blue": [-12, -15, -10], "purple": [0, -20, 0], "magenta": [0, -20, 0]
+  },
+  "color_grade": {"shadows": [210, 12, 0], "highlights": [50, 10, 0]},
+  "grain": {"amount": 14, "size": 1.2},
+  "protect_skin": 0.5, "sharpness": 28
+}

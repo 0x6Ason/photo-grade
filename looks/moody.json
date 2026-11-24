@@ -1,0 +1,18 @@
+{
+  "name": "moody",
+  "description": "Dark and atmospheric: cool desaturated tones, heavy skies, deep shadows, subtle vignette.",
+  "best_for": "overcast, rain, grey days, architecture, ships, dramatic skies",
+  "auto": {"exposure": true, "wb": true},
+  "exposure": -0.22, "contrast": 22, "highlights": -45, "shadows": -4, "whites": -10, "blacks": -14,
+  "temperature": -10, "saturation": -24, "vibrance": 6, "clarity": 16, "dehaze": 12,
+  "hsl": {
+    "orange": [0, 0, 6], "yellow": [-10, -30, -5], "green": [20, -50, -20],
+    "aqua": [0, -20, -10], "blue": [-10, -15, -20]
+  },
+  "color_grade": {"shadows": [210, 22, 0], "highlights": [40, 8, 0]},
+  "vignette": {"amount": -25},
+  "protect_skin": 0.6, "sharpness": 30,
+  "local": [
+    {"mask": "sky", "adjust": {"exposure": -0.3, "highlights": -30, "dehaze": 15, "contrast": 10}}
+  ]
+}

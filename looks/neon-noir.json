@@ -1,0 +1,16 @@
+{
+  "name": "neon-noir",
+  "description": "Cyberpunk night: magenta and cyan neon, inky blacks, glowing lights.",
+  "best_for": "night streets, neon signs, rain reflections, city lights",
+  "auto": {"exposure": false, "wb": false},
+  "exposure": -0.15, "contrast": 28, "highlights": -18, "shadows": -6, "whites": 10, "blacks": -24,
+  "temperature": -14, "tint": 16, "vibrance": 32, "saturation": 8,
+  "hsl": {
+    "red": [-15, 18, 4], "orange": [-22, 6, 0], "yellow": [-30, -25, 0], "green": [60, -30, -20],
+    "aqua": [10, 30, 6], "blue": [-18, 22, -4], "purple": [10, 20, 6], "magenta": [-5, 25, 10]
+  },
+  "color_grade": {"shadows": [215, 35, 0], "highlights": [320, 24, 0], "global": [260, 18, 0]},
+  "bloom": {"amount": 0.32, "threshold": 0.65, "radius": 0.022, "tint": [1.0, 0.65, 0.95]},
+  "vignette": {"amount": -20}, "grain": {"amount": 10},
+  "protect_skin": 0.6, "sharpness": 28
+}

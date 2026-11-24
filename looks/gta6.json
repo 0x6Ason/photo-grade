@@ -1,0 +1,16 @@
+{
+  "name": "gta6",
+  "description": "GTA VI / Vice City preset (@lightrooms.id): lavender wash, teal shadows, warm highlights, punchy colour, faded navy blacks.",
+  "best_for": "sunsets, golden hour, warm city streets, palms, beaches, cars",
+  "auto": {"exposure": false, "wb": false},
+  "exposure": -0.41, "contrast": 36, "highlights": -38, "shadows": 14, "whites": 14, "blacks": -23,
+  "temperature": -9, "tint": 21, "vibrance": 51, "saturation": 24,
+  "hsl": {
+    "red": [-7, 17, 13], "orange": [-6, 12, 14], "yellow": [-27, -22, 9], "green": [18, -32, -8],
+    "aqua": [-9, 24, 11], "blue": [-14, 7, -11], "purple": [8, 14, -5], "magenta": [8, 25, 8]
+  },
+  "color_grade": {
+    "shadows": [196, 26, 13], "midtones": [0, 0, -8], "highlights": [37, 23, -11], "global": [259, 51, 0]
+  },
+  "protect_skin": 0.5, "sharpness": 34
+}

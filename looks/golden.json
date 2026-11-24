@@ -1,0 +1,18 @@
+{
+  "name": "golden",
+  "description": "Golden-hour glow: warm light, rich oranges, soft highlight bloom, gentle blue shadows.",
+  "best_for": "sunsets, backlit portraits, warm landscapes, beaches",
+  "auto": {"exposure": true, "wb": false},
+  "exposure": 0.05, "contrast": 14, "highlights": -30, "shadows": 15, "temperature": 16, "tint": 5,
+  "vibrance": 24, "saturation": 2,
+  "hsl": {
+    "red": [5, 10, 0], "orange": [4, 14, 8], "yellow": [-14, 12, 4], "green": [-20, -22, -6],
+    "blue": [-5, -10, -10]
+  },
+  "color_grade": {"shadows": [220, 12, 0], "midtones": [30, 8, 0], "highlights": [40, 28, 4]},
+  "bloom": {"amount": 0.22, "threshold": 0.72, "radius": 0.03, "tint": [1.0, 0.78, 0.5]},
+  "protect_skin": 0.35, "sharpness": 25,
+  "local": [
+    {"mask": "sky", "adjust": {"saturation": 12, "temperature": 8, "highlights": -15}}
+  ]
+}

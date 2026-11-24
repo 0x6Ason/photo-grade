@@ -1,0 +1,12 @@
+{
+  "name": "natural",
+  "description": "Clean true-to-life polish: balanced exposure and white balance, gentle contrast, depth and colour. The safe default.",
+  "best_for": "anything; everyday photos, travel, food, people",
+  "auto": {"exposure": true, "wb": true},
+  "contrast": 12, "highlights": -28, "shadows": 20, "whites": 8, "blacks": -8,
+  "vibrance": 20, "saturation": 2, "clarity": 8, "texture": 6, "dehaze": 4,
+  "protect_skin": 0.5, "sharpness": 30,
+  "local": [
+    {"mask": "sky", "adjust": {"highlights": -25, "saturation": 8, "dehaze": 8}}
+  ]
+}
