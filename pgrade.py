@@ -654,9 +654,11 @@ def classify(s):
     elif ground_dark:
         scene = "night_neon" if s["neon_fraction"] > 0.004 else "night"
     elif sky and sky["chroma"] < 0.035 and sky["lightness"] > 0.55 and s["sky_fraction"] > 0.08 \
-            and s["warm_highlights"] < 0.035:
+            and s["warm_highlights"] < 0.035 and s["mean_chroma"] < 0.035:  # grey sky AND a grey scene
         scene = "overcast"
-    elif blue_sky:
+    elif blue_sky or (sky and s["ground_luma"] > 0.45 and s["mean_chroma"] >= 0.035):  # incl. hazy-white sky on a sunny day
+        scene = "daylight"
+    elif False:
         scene = "daylight"
     elif s["warm_highlights"] > 0.05:
         scene = "golden_hour"
@@ -759,7 +761,7 @@ def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7):
     x = develop(st_chroma_denoise(img, P.get("color_denoise", 0.8)) if not pointwise else img, P)
     if not pointwise:
         locs = list(P.get("local", []))
-        if pop and not (0.02 < scene.proxy_mask("subject").mean() < 0.75):
+        if pop and not (0.004 < scene.proxy_mask("subject").mean() < 0.75):
             log("[pgrade] no clear subject found -> --pop skipped")
             pop = 0
         if pop:
