@@ -43,7 +43,7 @@ If the user wants to choose, run `$PG sheet PHOTO --looks suggested` (or `all`) 
 | look | for |
 |---|---|
 | `natural` | anything; the clean, safe default |
-| `jp-airy` | portraits and selfies: Japanese airy (透明感), bright, soft, fair skin. The default for faces |
+| `jp-airy` | portraits and selfies in light, airy settings: Japanese airy (透明感), bright and soft. For dark or busy backgrounds use `jp-film` or `natural` instead |
 | `jp-film` | people in the street, everyday life: soft Fuji-film pastels |
 | `jp-summer` | sunny days, sea, trains, blue skies. Learned from the user's own Kamakura edit, so it is strong by design |
 | `gta6` | sunsets, golden hour, warm or neon streets at dusk |
@@ -98,5 +98,6 @@ The LUT holds the global colour only. Masks, clarity, bloom, grain and vignette 
 - A 12 MP photo grades in about 11–15 s. It takes about 23 s with retouch or the `jp-airy` look, and peaks at about 2.8 GB of RAM. The subject model adds about 3 s.
 - Photos are graded and saved in sRGB. Wide-gamut (Display P3) originals are converted first.
 - Blonde hair right next to the face can be partly included in `faceskin`. Retouching there is gentle.
+- Every look keeps people's real skin tone. The skin's lightness and colour strength can change only a little from the original, so no look whitens, greys or oranges a face.
 - Masks are refined at full resolution, but very thin structures can be partly included in a mask, for example a lit spire against the sky.
 - Auto scene detection is a heuristic. Your own look at the photo wins.
