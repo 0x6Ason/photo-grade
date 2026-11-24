@@ -1307,6 +1307,217 @@ def masks_used_preview(scene, locs, path):
     return path
 
 
+# ===================================================================== scopes
+SKIN_HUE, SKIN_LO, SKIN_HI = 47.0, 32.0, 63.0  # Oklab hue of real skin (measured across skin tones)
+
+
+def _cast(a, b):
+    parts = []
+    if abs(b) > 0.006:
+        parts.append(f"{'warm' if b > 0 else 'cool'} {b:+.3f}")
+    if abs(a) > 0.006:
+        parts.append(f"{'magenta' if a > 0 else 'green'} {a:+.3f}")
+    return ", ".join(parts) or "neutral"
+
+
+def region_stats(x, w):
+    sel = w > 0.5
+    if sel.mean() < 0.004:
+        return None
+    px = x[sel]
+    L = px @ LUMA
+    lab = to_oklab(px)
+    C = np.hypot(lab[:, 1], lab[:, 2])
+    h = np.degrees(np.arctan2(lab[:, 2], lab[:, 1])) % 360
+    st = {"area": float(sel.mean()), "luma_p1_50_99": [round(float(v), 3) for v in np.percentile(L, [1, 50, 99])],
+          "clipped_highlights": float((px.max(-1) >= 0.995).mean()), "crushed_shadows": float((px.max(-1) <= 0.012).mean()),
+          "colour_clipping": float(((px.max(-1) >= 0.995) | (px.min(-1) <= 0.003)).__and__(C > 0.08).mean()),
+          "chroma_mean": float(C.mean()), "chroma_p95": float(np.percentile(C, 95)),
+          "hue_median": float(np.degrees(np.arctan2(np.median(lab[:, 2]), np.median(lab[:, 1]))) % 360),
+          "lightness_median": float(np.median(lab[:, 0])), "chroma_median": float(np.median(C))}
+    neu = (C < 0.04) & (lab[:, 0] > 0.25) & (lab[:, 0] < 0.95)
+    st["neutral_cast"] = _cast(*lab[neu][:, 1:].mean(0)) if neu.mean() > 0.02 else "n/a"
+    W = hsl_weights(h) * C[:, None]
+    share = W.sum(0) / max(W.sum(), 1e-9)
+    st["main_hues"] = ", ".join(f"{HSL_BANDS[i][0]} {share[i]:.0%}" for i in np.argsort(-share)[:3] if share[i] > 0.1)
+    return st
+
+
+def _fmt(name, st):
+    p = st["luma_p1_50_99"]
+    s = (f"{name:8s} {st['area']:5.0%}  luma p1/50/99 {p[0]:.2f}/{p[1]:.2f}/{p[2]:.2f}  clip hi {st['clipped_highlights']:.1%}"
+         f" lo {st['crushed_shadows']:.1%}  sat {st['chroma_mean']:.3f} (p95 {st['chroma_p95']:.3f})  cast {st['neutral_cast']}")
+    if st["main_hues"]:
+        s += f"  hues: {st['main_hues']}"
+    if name == "skin":
+        s += f"  | skin hue {st['hue_median']:.0f}° (line {SKIN_HUE:.0f}°) L {st['lightness_median']:.2f} C {st['chroma_median']:.3f}"
+    if name == "sky":
+        s += f"  | sky hue {st['hue_median']:.0f}° L {st['lightness_median']:.2f} C {st['chroma_median']:.3f}"
+    return s
+
+
+def _warnings(regions, before=None):
+    w = []
+    a = regions.get("all")
+    if a and a["clipped_highlights"] > 0.01:
+        w.append(f"highlights clipped on {a['clipped_highlights']:.1%} of the frame")
+    if a and a["crushed_shadows"] > 0.03:
+        w.append(f"shadows crushed on {a['crushed_shadows']:.1%} of the frame")
+    if a and a["colour_clipping"] > 0.01:
+        w.append(f"saturated colours hit the gamut edge on {a['colour_clipping']:.1%} (flat, posterised patches)")
+    sk = regions.get("skin")
+    if sk:
+        if sk["hue_median"] > SKIN_HI:
+            w.append(f"skin too yellow/orange (hue {sk['hue_median']:.0f}°, real skin {SKIN_LO:.0f}–{SKIN_HI:.0f}°)")
+        elif sk["hue_median"] < SKIN_LO:
+            w.append(f"skin too pink/magenta (hue {sk['hue_median']:.0f}°, real skin {SKIN_LO:.0f}–{SKIN_HI:.0f}°)")
+        if sk["chroma_median"] < 0.022:
+            w.append(f"skin looks grey/ashy (chroma {sk['chroma_median']:.3f})")
+        if sk["chroma_median"] > 0.13:
+            w.append(f"skin oversaturated (chroma {sk['chroma_median']:.3f})")
+    sy = regions.get("sky")
+    if sy and sk and sy["area"] > 0.3 and sy["chroma_median"] < 0.04 and not (180 < sy["hue_median"] < 300):
+        w.append("the 'sky' mask may be a plain wall or backdrop behind the person; check `masks` before using sky moves")
+    if sy and sy["clipped_highlights"] > 0.03:
+        w.append(f"sky blown on {sy['clipped_highlights']:.0%} of the sky")
+    if before:
+        b0, a0 = before.get("skin"), regions.get("skin")
+        if b0 and a0:
+            dh = angdiff(a0["hue_median"], b0["hue_median"])
+            if abs(dh) > 8:
+                w.append(f"skin hue moved {dh:+.0f}° from the original")
+            if abs(a0["lightness_median"] - b0["lightness_median"]) > 0.07:
+                w.append(f"skin lightness moved {a0['lightness_median'] - b0['lightness_median']:+.2f} from the original")
+        if a and before.get("all") and a["clipped_highlights"] - before["all"]["clipped_highlights"] > 0.005:
+            w.append(f"the grade added {a['clipped_highlights'] - before['all']['clipped_highlights']:.1%} clipped highlights")
+    return w
+
+
+def scope_panels(x, title):
+    L = luma(x)
+    H, W = L.shape
+    xs = cv2.resize(L, (512, max(1, round(H * 512 / W))), interpolation=cv2.INTER_AREA)
+    wf = np.zeros((200, 512), np.float32)
+    rows = np.clip((1 - xs) * 199, 0, 199).astype(int)
+    for c in range(512):
+        np.add.at(wf[:, c], rows[:, c], 1)
+    wf = np.log1p(wf) / max(np.log1p(wf).max(), 1e-6)
+    wfi = np.stack([wf * 0.6, wf, wf * 0.6], -1)
+    wfi[0, :] = wfi[199, :] = [0.8, 0.2, 0.2]  # 0% and 100% lines
+    wfi[100, ::4] = 0.35
+    lab = to_oklab(cv2.resize(x, (512, max(1, round(H * 512 / W))), interpolation=cv2.INTER_AREA)).reshape(-1, 3)
+    n, R = 200, 0.22
+    ij = np.clip(((lab[:, 1:] / R) * (n / 2) + n / 2).astype(int), 0, n - 1)
+    vs = np.zeros((n, n), np.float32)
+    np.add.at(vs, (n - 1 - ij[:, 1], ij[:, 0]), 1)
+    vs = np.log1p(vs) / max(np.log1p(vs).max(), 1e-6)
+    vsi = np.repeat(vs[..., None], 3, -1) * np.array([0.9, 0.95, 1.0], np.float32)
+    vimg = to_pil(vsi)
+    d = ImageDraw.Draw(vimg)
+    for rr in (0.05, 0.1, 0.15, 0.2):
+        r = rr / R * n / 2
+        d.ellipse([n / 2 - r, n / 2 - r, n / 2 + r, n / 2 + r], outline=(60, 60, 60))
+    ang = math.radians(SKIN_HUE)
+    d.line([n / 2, n / 2, n / 2 + math.cos(ang) * n / 2, n / 2 - math.sin(ang) * n / 2], fill=(255, 170, 90), width=1)
+    for name, hh in (("R", 25), ("Y", 100), ("G", 140), ("C", 195), ("B", 255), ("M", 335)):
+        a2 = math.radians(hh)
+        d.text((n / 2 + math.cos(a2) * 0.19 / R * n / 2 - 4, n / 2 - math.sin(a2) * 0.19 / R * n / 2 - 6), name, fill=(200, 200, 200), font=_font(11))
+    hist = Image.new("RGB", (256, 200), "black")
+    hd = ImageDraw.Draw(hist)
+    q = (np.clip(x, 0, 1) * 255).astype(np.uint8).reshape(-1, 3)
+    hs = [np.bincount(q[:, c], minlength=256) for c in range(3)]
+    top = max(h[2:-2].max() for h in hs) or 1
+    for c, col in enumerate([(255, 70, 70), (70, 255, 70), (90, 140, 255)]):
+        pts = [(i, 199 - min(199, int(hs[c][i] / top * 190))) for i in range(256)]
+        hd.line(pts, fill=col, width=1)
+    panel = Image.new("RGB", (512 + 200 + 256 + 12, 222), (20, 20, 20))
+    panel.paste(to_pil(wfi), (0, 22))
+    panel.paste(vimg, (518, 22))
+    panel.paste(hist, (724, 22))
+    ImageDraw.Draw(panel).text((4, 3), f"{title}: waveform | vectorscope (orange line = skin) | RGB histogram", fill="white", font=_font(14))
+    return panel
+
+
+def _crop_boxes(scene, full_h, full_w, size=384):
+    """Spots that downscaled previews hide: the biggest face, the sky edge, the brightest highlight."""
+    sx, sy = full_w / scene.pw, full_h / scene.ph
+    boxes = []
+    if scene.faces():
+        x, y, w, h, _ = max(scene.faces(), key=lambda f: f[2] * f[3])
+        cx, cy = (x + w / 2) * sx, (y + h / 2) * sy
+        boxes.append(("face", cx, cy))
+    sky = scene.proxy_mask("sky")
+    if 0.03 < sky.mean() < 0.97:
+        g = cv2.morphologyEx(sky, cv2.MORPH_GRADIENT, np.ones((5, 5), np.uint8))
+        yy, xx = np.unravel_index(np.argmax(cv2.GaussianBlur(g * luma(scene.px), (0, 0), 3)), g.shape)
+        boxes.append(("sky edge", xx * sx, yy * sy))
+    L = cv2.GaussianBlur(luma(scene.px), (0, 0), 4)
+    yy, xx = np.unravel_index(np.argmax(L), L.shape)
+    boxes.append(("highlight", xx * sx, yy * sy))
+    out = []
+    for name, cx, cy in boxes:
+        x0 = int(np.clip(cx - size / 2, 0, max(0, full_w - size)))
+        y0 = int(np.clip(cy - size / 2, 0, max(0, full_h - size)))
+        out.append((name, y0, min(full_h, y0 + size), x0, min(full_w, x0 + size)))
+    return out
+
+
+def cmd_scopes(a, looks):
+    img, _ = load_image(a.photo)
+    versions = [("original", img)]
+    if a.vs:
+        g, _ = load_image(a.vs)
+        if g.shape[:2] != img.shape[:2]:
+            g = cv2.resize(g, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_AREA)
+        versions.append(("graded", g))
+    scene = Scene(downsize(img, PROXY))
+    regions = {"all": np.ones((scene.ph, scene.pw), np.float32), "sky": scene.proxy_mask("sky")}
+    if scene.faces():
+        regions["skin"] = scene.proxy_mask("faceskin")
+    if a.subject:
+        regions["subject"] = scene.proxy_mask("subject")
+    for e in a.mask or []:
+        regions[e] = downsize(scene.expr(e), PROXY)
+    report, prev = {}, None
+    for name, v in versions:
+        pv = cv2.resize(v, (scene.pw, scene.ph), interpolation=cv2.INTER_AREA)
+        st = {k: region_stats(pv, m) for k, m in regions.items()}
+        st = {k: s for k, s in st.items() if s}
+        report[name] = {"regions": st, "warnings": _warnings(st, prev)}
+        print(f"== {name}")
+        for k, s in st.items():
+            print(_fmt(k, s))
+        for wmsg in report[name]["warnings"]:
+            print(f"!! {wmsg}")
+        prev = st
+    stem = os.path.splitext(os.path.basename(a.vs or a.photo))[0]
+    od = a.outdir or os.path.dirname(os.path.abspath(a.vs or a.photo))
+    os.makedirs(od, exist_ok=True)
+    panels = [scope_panels(cv2.resize(v, (scene.pw, scene.ph), interpolation=cv2.INTER_AREA), n) for n, v in versions]
+    sc = Image.new("RGB", (panels[0].width, sum(pn.height for pn in panels)), "black")
+    for i, pn in enumerate(panels):
+        sc.paste(pn, (0, i * pn.height))
+    sc.save(os.path.join(od, f"{stem}_scopes.jpg"), quality=90)
+    boxes = _crop_boxes(scene, *img.shape[:2])
+    tiles = []
+    for bname, y0, y1, x0, x1 in boxes:
+        row = [label(to_pil(v[y0:y1, x0:x1]), f"{bname} 100% ({n})", 16) for n, v in versions]
+        tiles.append(row)
+    if tiles:
+        cw = max(t.width for r in tiles for t in r)
+        chh = max(t.height for r in tiles for t in r)
+        cr = Image.new("RGB", (len(versions) * (cw + 6), len(tiles) * (chh + 6)), "black")
+        for i, r in enumerate(tiles):
+            for j, t in enumerate(r):
+                cr.paste(t, (j * (cw + 6), i * (chh + 6)))
+        cr.save(os.path.join(od, f"{stem}_crops.jpg"), quality=92)
+    print(os.path.join(od, f"{stem}_scopes.jpg"))
+    print(os.path.join(od, f"{stem}_crops.jpg"))
+    if a.json:
+        with open(os.path.join(od, f"{stem}_scopes.json"), "w") as fh:
+            json.dump(report, fh, indent=2)
+
+
 def cmd_learn(a, looks):
     """Learn a look from a before/after pair of the same photo (any editor: Lightroom, VSCO...)."""
     b, _ = load_image(a.before)
@@ -1387,6 +1598,13 @@ def main():
     s.add_argument("inputs", nargs="+")
     s.add_argument("--subject", action="store_true", help="also run the subject model")
     s.add_argument("-o", "--outdir")
+    s = sub.add_parser("scopes", help="measure colour: per-region numbers, waveform/vectorscope, 100% crops")
+    s.add_argument("photo", help="the original photo")
+    s.add_argument("--vs", help="the graded version to compare against the original")
+    s.add_argument("--mask", action="append", help="extra region to measure (mask expression); repeatable")
+    s.add_argument("--subject", action="store_true", help="also measure the subject (needs the subject model)")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("-o", "--outdir")
     s = sub.add_parser("match", help="copy the colour style of a reference image onto a photo")
     s.add_argument("photo")
     s.add_argument("reference")
@@ -1410,7 +1628,7 @@ def main():
     a = ap.parse_args()
     looks = load_looks()
     {"looks": cmd_looks, "analyze": cmd_analyze, "grade": cmd_grade, "sheet": cmd_sheet,
-     "masks": cmd_masks, "lut": cmd_lut, "learn": cmd_learn, "match": cmd_match}[a.cmd](a, looks)
+     "masks": cmd_masks, "lut": cmd_lut, "learn": cmd_learn, "match": cmd_match, "scopes": cmd_scopes}[a.cmd](a, looks)
 
 
 if __name__ == "__main__":

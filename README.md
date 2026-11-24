@@ -35,6 +35,22 @@ python3 pgrade.py grade IMG.jpg --look recipe.json --compare --show-masks
 
 Combine tokens with `*` and invert one with `!`.
 
+## Measuring colour: scopes
+
+```bash
+python3 pgrade.py scopes ORIGINAL.jpg --vs GRADED.jpg
+```
+
+This prints per-region numbers for the whole frame, the sky and the skin:
+- clipped highlights and crushed shadows
+- the colour cast on neutral areas
+- saturation and the main hues
+- skin hue against the skin line
+
+It also flags problems: blown skies, colours hitting the gamut edge, skin turned orange, pink or ashy, or skin moved from the original. And it saves `*_scopes.jpg` (waveform, vectorscope with a skin line, RGB histogram) and `*_crops.jpg` (100% crops of the face, the sky edge and the brightest highlight).
+
+Small previews hide subtle casts, clipping and halos, and that's as true for an AI judging the image as for a person on a phone. So grading decisions are checked with numbers.
+
 ## Style from a reference
 
 The output is always your own photo. A reference only supplies colour.
@@ -92,6 +108,7 @@ pgrade.py masks   IMG [--subject]        preview the AI masks
 pgrade.py looks                          list looks
 pgrade.py learn   BEFORE AFTER --name N learn a look from your own edit (or --loose: an AI restyle) of one photo
 pgrade.py match   PHOTO REF --name N     copy the colour style of a reference image with different content
+pgrade.py scopes  ORIG [--vs GRADED]     measure: per-region numbers, warnings, waveform/vectorscope, 100% crops
 pgrade.py lut     --look NAME out.cube   global colour as a 3D LUT (ffmpeg, Resolve, Premiere, CapCut)
 ```
 

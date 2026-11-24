@@ -1,0 +1,64 @@
+{
+  "base": "jp-summer",
+  "intent": "Summer race energy: turquoise pool, warm skin, eye straight to the diver; calm the busy stands and the bright sky.",
+  "local": [
+    {
+      "mask": "grad:top:0.55",
+      "adjust": {
+        "exposure": -0.2,
+        "highlights": -25,
+        "saturation": -12
+      }
+    },
+    {
+      "mask": "subject",
+      "adjust": {
+        "exposure": 0.12,
+        "clarity": 12,
+        "texture": 8
+      }
+    },
+    {
+      "mask": "radial:0.45,0.62,0.45",
+      "adjust": {
+        "exposure": 0.08
+      }
+    },
+    {
+      "mask": "hue:185-235*lum:0.3-1",
+      "adjust": {
+        "saturation": 8
+      }
+    },
+    {
+      "mask": "sky",
+      "adjust": {
+        "temperature": -12,
+        "tint": 16,
+        "saturation": -5
+      }
+    }
+  ],
+  "vignette": {
+    "amount": -12
+  },
+  "color_grade": {
+    "global": [
+      310,
+      14,
+      0
+    ]
+  },
+  "hsl": {
+    "yellow": [
+      8,
+      -35,
+      0
+    ],
+    "green": [
+      0,
+      -30,
+      0
+    ]
+  }
+}

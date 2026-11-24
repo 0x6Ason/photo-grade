@@ -1,0 +1,10 @@
+{
+  "base": "gta6",
+  "intent": "Cinematic GTA dusk: glowing sky gap, neon reflections on the wet street, rich but readable shadows.",
+  "local": [
+    {"mask": "sky", "adjust": {"highlights": -20, "saturation": 12}},
+    {"mask": "grad:bottom:0.35", "adjust": {"exposure": 0.1, "clarity": 12, "saturation": 10}},
+    {"mask": "lum:0-0.25*!sky", "adjust": {"shadows": 15}}
+  ],
+  "bloom": {"amount": 0.18, "threshold": 0.75, "radius": 0.02, "tint": [1.0, 0.75, 0.6]}
+}

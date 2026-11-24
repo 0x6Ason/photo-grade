@@ -46,8 +46,15 @@ PG="python3 $HOME/photo-grade/pgrade.py"
 5. **Render:** `$PG grade PHOTO --look recipe.json --compare --show-masks -o graded/`
    - **Faces:** add `--retouch 1`, or `0.5` for men or subtle results. It softens skin and lights the face, on face skin only. `jp-airy` and `jp-film` already include it.
    - **Quick subject lift:** `--pop 1`. It is skipped automatically when there is no clear subject.
-6. **Critique, then iterate one to three times.**
+6. **Measure, critique, then iterate one to three times.** Your view of an image is downscaled and judges colour roughly: subtle casts, small clipped areas, banding and mask halos are easy to miss. So measure, don't eyeball:
    - **Check `*_masks.jpg` first:** each mask must hit exactly what you meant. If not, fix the tokens or positions, or switch off a bad AI mask with `--no-mask sky`.
+   - **Run `$PG scopes ORIGINAL --vs GRADED`.** It gives:
+     - per-region numbers (whole frame, sky, skin): clipping, colour cast on neutrals, saturation, main hues, skin hue against the skin line
+     - `!!` warnings
+     - `*_scopes.jpg`: waveform, vectorscope with a skin line, histogram
+     - `*_crops.jpg`: 100% crops of the face, the sky edge and the brightest highlight
+
+     Resolve every `!!` warning, or keep it only on purpose, for example deliberate fade. Look at the crops for halos, banding and noise. Add `--mask EXPR` to measure any other region.
    - **Then check the compare image:**
      - Does the eye land where intended?
      - Are highlights or shadows clipped?
@@ -119,6 +126,7 @@ Always check the check image (`N_learn_check.jpg` or `N_match_check.jpg`) before
 - Strong styles (gta6, vice-night, jp-summer, neon-noir) need matching light. On the wrong photo they look like a filter.
 - Skin must never turn orange, grey or whitened. The engine limits how far any look can change skin lightness and colour strength, but still check. Retouch faces only.
 - Keep detail in highlights and shadows unless the look is deliberately faded or crushed.
+- Trust the numbers over your eye for colour. Real skin sits at an Oklab hue of about 32–63°; sky is blue at about 200–260°. A strong look can push skies green-cyan or yellows to neon without it showing in a small preview.
 
 ## Video
 
