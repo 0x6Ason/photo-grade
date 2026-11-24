@@ -269,6 +269,74 @@ def fit_lut(before, after, n=33):
     return np.clip(np.stack([rr, gg, bb], -1) + res, 0, 1).astype(np.float32)
 
 
+# ===================================================== matching a reference
+def _wquantile(v, w, qs):
+    o = np.argsort(v)
+    c = np.cumsum(w[o])
+    return np.interp(qs * c[-1], c, v[o])
+
+
+def _zone(L, c, sig=0.14):
+    return np.exp(-0.5 * ((L - c) / sig) ** 2)
+
+
+def build_transfer(lt, wt, lr, wr, tone=0.6, color=0.85, cap=0.07):
+    """Colour-grade transfer in Oklab from target samples to reference samples (any content).
+    Tone: weighted quantile mapping of lightness, slope-limited so it never posterises.
+    Colour: per-lightness-zone mean (cast) and spread (saturation) matching."""
+    qs = np.linspace(0.01, 0.99, 50)
+    qt, qr = _wquantile(lt[:, 0], wt, qs), _wquantile(lr[:, 0], wr, qs)
+    xs = np.linspace(0, 1, 256)
+    y = np.interp(xs, np.r_[0, qt, 1], np.r_[max(0, qr[0] - qt[0]), qr, min(1, qr[-1] + 1 - qt[-1])])
+    d = np.clip(np.diff(y) / np.diff(xs), 0.35, 2.5)
+    y = np.r_[y[0], y[0] + np.cumsum(d * np.diff(xs))]
+    y = np.convolve(np.pad(y, 4, mode="edge"), np.ones(9) / 9, "valid")
+    y = np.clip(xs + tone * (y - xs), 0, 1)
+    Lt = np.interp(lt[:, 0], xs, y)
+    centers = np.array([0.12, 0.32, 0.52, 0.72, 0.9])
+
+    def stats(L, ab, w):
+        out = []
+        tot = w.sum()
+        g = (w[:, None] * ab).sum(0) / tot
+        gs = np.sqrt((w * ((ab - g) ** 2).sum(-1)).sum() / tot)
+        for c in centers:
+            z = w * _zone(L, c)
+            sz = z.sum()
+            conf = min(1.0, sz / tot / 0.08)  # zones the photo barely uses fall back to global stats
+            m = (z[:, None] * ab).sum(0) / max(sz, 1e-9)
+            sd = np.sqrt((z * ((ab - m) ** 2).sum(-1)).sum() / max(sz, 1e-9))
+            out.append((conf * m + (1 - conf) * g, conf * sd + (1 - conf) * gs))
+        return out
+    st, sr = stats(Lt, lt[:, 1:], wt), stats(lr[:, 0], lr[:, 1:], wr)
+    mt = np.array([a[0] for a in st])
+    mr = np.array([a[0] for a in sr])
+    shift = mr - mt
+    n = np.linalg.norm(shift, axis=1, keepdims=True)
+    mr = mt + shift * np.minimum(1, cap / np.maximum(n, 1e-9))  # cap the cast so nothing turns neon
+    ratio = np.clip(np.array([b[1] for b in sr]) / np.maximum([a[1] for a in st], 1e-4), 0.6, 1.7)
+
+    def apply(lab):
+        L = np.interp(lab[..., 0], xs, y)
+        f = lambda v: np.interp(L, centers, v)
+        m_t = np.stack([f(mt[:, 0]), f(mt[:, 1])], -1)
+        m_r = np.stack([f(mr[:, 0]), f(mr[:, 1])], -1)
+        ab = lab[..., 1:]
+        ab2 = m_r + (ab - m_t) * f(ratio)[..., None]
+        out = np.empty_like(lab)
+        out[..., 0] = L
+        out[..., 1:] = ab + color * (ab2 - ab)
+        return out.astype(np.float32)
+    return apply
+
+
+def bake_lut(fn, n=33):
+    g = np.linspace(0, 1, n, dtype=np.float32)
+    b, gg, r = np.meshgrid(g, g, g, indexing="ij")
+    grid = np.stack([r, gg, b], -1).reshape(-1, 3)
+    return oklab_to_srgb(fn(to_oklab(grid))).reshape(n, n, n, 3)
+
+
 # ================================================================ tone stages
 TONE_KEYS = ("contrast", "highlights", "shadows", "whites", "blacks")
 K_TONE, K_HIGHLIGHTS, K_WHITES, K_CONTRAST = 0.30, 0.22, 0.60, 0.80
@@ -713,17 +781,19 @@ class Scene:
                 lab = to_oklab(img)
                 hh = np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360
                 c, wd = (lo + angdiff(hi, lo) / 2) % 360, abs(angdiff(hi, lo)) / 2
-                m = (1 - smoothstep(wd, wd + 15, np.abs(angdiff(hh, c)))) * smoothstep(0.02, 0.06, np.hypot(lab[..., 1], lab[..., 2]))
+                m = (1 - smoothstep(wd, wd + 15, np.abs(angdiff(hh, c)))) * smoothstep(0.035, 0.08, np.hypot(lab[..., 1], lab[..., 2]))
             elif name == "grad":
                 side, _, ext = arg.partition(":")
                 ext = float(ext or 0.5)
                 yy, xx = np.mgrid[:self.H, :self.W].astype(np.float32)
                 t = {"top": yy / self.H, "bottom": 1 - yy / self.H, "left": xx / self.W, "right": 1 - xx / self.W}[side or "top"]
                 m = 1 - smoothstep(0, ext, t)
-            elif name == "radial":
-                size = float(arg or 0.6)
+            elif name == "radial":  # radial:SIZE or radial:CX,CY,SIZE (fractions of the frame)
+                v = [float(t) for t in arg.split(",")] if arg else [0.6]
+                cx, cy, size = (0.5, 0.5, v[0]) if len(v) == 1 else v[:3]
                 yy, xx = np.ogrid[:self.H, :self.W]
-                d = np.sqrt(((xx - self.W / 2) / (self.W / 2)) ** 2 + ((yy - self.H / 2) / (self.H / 2)) ** 2)
+                sc = min(self.W, self.H) / 2
+                d = np.sqrt(((xx - cx * self.W) / sc) ** 2 + ((yy - cy * self.H) / sc) ** 2)
                 m = (1 - smoothstep(size * 0.6, size * 1.2, d)).astype(np.float32)
             else:
                 raise ValueError(f"unknown mask token: {tok}")
@@ -810,8 +880,23 @@ def classify(s):
 def deep_merge(base, over):
     out = copy.deepcopy(base)
     for k, v in over.items():
-        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else copy.deepcopy(v)
+        if k == "local" and isinstance(out.get(k), list) and not over.get("replace_local"):
+            out[k] = out[k] + copy.deepcopy(v)  # a recipe ADDS its local moves to the base look's
+        elif isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
     return out
+
+
+def _resolve_luts(j, folder):
+    fix = lambda p: p if (not p or os.path.isabs(p)) else os.path.join(folder, p)
+    if j.get("lut"):
+        j["lut"] = fix(j["lut"])
+    for loc in j.get("local", []):
+        if loc.get("adjust", {}).get("lut"):
+            loc["adjust"]["lut"] = fix(loc["adjust"]["lut"])
+    return j
 
 
 def load_looks():
@@ -820,8 +905,7 @@ def load_looks():
         for f in sorted(glob.glob(os.path.join(d, "*.json"))):
             with open(f) as fh:
                 j = json.load(fh)
-            if j.get("lut") and not os.path.isabs(j["lut"]):
-                j["lut"] = os.path.join(os.path.dirname(os.path.abspath(f)), j["lut"])
+            _resolve_luts(j, os.path.dirname(os.path.abspath(f)))
             raw[j.get("name", os.path.splitext(os.path.basename(f))[0])] = j
     out = {}
 
@@ -844,8 +928,7 @@ def get_look(name, looks):
     if name and os.path.isfile(name):
         with open(name) as fh:
             j = json.load(fh)
-        if j.get("lut") and not os.path.isabs(j["lut"]):
-            j["lut"] = os.path.join(os.path.dirname(os.path.abspath(name)), j["lut"])
+        _resolve_luts(j, os.path.dirname(os.path.abspath(name)))
         return deep_merge(looks[j["base"]], j) if j.get("base") in looks else j
     if name not in looks:
         sys.exit(f"unknown look '{name}'. Available: {', '.join(sorted(looks))}")
@@ -905,6 +988,7 @@ def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7, reto
         if pop:
             locs += [{"mask": "subject", "adjust": {"exposure": 0.12 * pop, "clarity": 12 * pop, "vibrance": 8 * pop}},
                      {"mask": "background", "adjust": {"exposure": -0.12 * pop, "saturation": -8 * pop}}]
+        scene.used_locals = locs
         for loc in locs:
             m = scene.expr(loc["mask"]) * loc.get("amount", 1.0)
             if m.max() < 0.02:
@@ -1095,6 +1179,9 @@ def cmd_grade(a, looks):
             cdst = os.path.join(od, f"{stem}_{tag}_compare.jpg")
             compare_image(downsize(img, 2000), downsize(x, 2000), tag).save(cdst, quality=90)
             print(cdst)
+        if a.show_masks:
+            mp = masks_used_preview(scene, getattr(scene, "used_locals", []), os.path.join(od, f"{stem}_{tag}_masks.jpg"))
+            print(mp or "(no masked adjustments in this grade)")
 
 
 def cmd_sheet(a, looks):
@@ -1160,14 +1247,85 @@ def cmd_lut(a, looks):
     print(a.out, "(global colour only: masks, clarity, dehaze, bloom, grain and vignette are not in a LUT)")
 
 
+def cmd_match(a, looks):
+    """Copy the colour style of a reference image (any content) onto the user's photo."""
+    t, _ = load_image(a.photo)
+    r, _ = load_image(a.reference)
+    ts, rs = downsize(t, 640), downsize(r, 640)
+    st, sr = Scene(ts), Scene(rs)
+    k = a.strength
+    lt, lr = to_oklab(ts).reshape(-1, 3), to_oklab(rs).reshape(-1, 3)
+    skt, skr = st.proxy_mask("sky").ravel(), sr.proxy_mask("sky").ravel()
+    # skin never drives the palette (and is protected when grading)
+    wt = (1 - st.proxy_mask("skin").ravel()) * (1 - skt if skt.mean() > 0.05 else 1)
+    wr = (1 - sr.proxy_mask("skin").ravel()) * (1 - skr if skr.mean() > 0.05 else 1)
+    g = build_transfer(lt, wt + 1e-6, lr, wr + 1e-6, tone=0.6 * k, color=0.85 * k)
+    od = a.outdir or os.path.expanduser("~/.config/photo-grade/looks")
+    os.makedirs(os.path.join(od, "luts"), exist_ok=True)
+    write_cube(os.path.join(od, "luts", f"{a.name}.cube"), bake_lut(g), a.name)
+    look = {"name": a.name, "description": a.description or f"Colour matched to {os.path.basename(a.reference)}.",
+            "best_for": "the photo it was matched for, and similar scenes", "matched_to": os.path.basename(a.reference),
+            "auto": {"exposure": False, "wb": False}, "lut": f"luts/{a.name}.cube", "protect_skin": 0.6, "sharpness": 15}
+    if skt.mean() > 0.05 and skr.mean() > 0.05:  # sky follows the reference's sky, not its ground
+        gt = g(lt)
+        sky = build_transfer(gt, skt + 1e-6, lr, skr + 1e-6, tone=0.5 * k, color=0.85 * k, cap=0.1)
+        write_cube(os.path.join(od, "luts", f"{a.name}_sky.cube"), bake_lut(sky), a.name + " sky")
+        look["local"] = [{"mask": "sky", "adjust": {"lut": f"luts/{a.name}_sky.cube"}}]
+    with open(os.path.join(od, f"{a.name}.json"), "w") as fh:
+        json.dump(look, fh, indent=2)
+    looks = load_looks() if od in LOOK_DIRS else looks
+    lk = get_look(os.path.join(od, f"{a.name}.json"), looks)
+    out = grade(ts, lk, st)
+    h = ts.shape[0]
+    rr = cv2.resize(rs, (round(rs.shape[1] * h / rs.shape[0]), h), interpolation=cv2.INTER_AREA)
+    tiles = [label(to_pil(ts), "your photo"), label(to_pil(out), "matched"), label(to_pil(rr), "reference")]
+    c = Image.new("RGB", (sum(tl.width for tl in tiles) + 12, h), "black")
+    xo = 0
+    for tl in tiles:
+        c.paste(tl, (xo, 0))
+        xo += tl.width + 6
+    cpath = os.path.join(od, f"{a.name}_match_check.jpg")
+    c.save(cpath, quality=88)
+    print(f"{os.path.join(od, a.name + '.json')}\n{cpath}")
+
+
+def masks_used_preview(scene, locs, path):
+    tiles = []
+    for loc in locs:
+        m = downsize(scene.expr(loc["mask"]), 700)
+        base = downsize(scene.img, 700)
+        vis = base * 0.35 + m[..., None] * np.array([1.0, 0.55, 0.15], np.float32) * 0.65 + (m[..., None] * base * 0.35)
+        tiles.append(label(to_pil(vis), f'{loc["mask"]}  {", ".join(f"{k} {v}" for k, v in loc["adjust"].items() if k != "lut")}'[:60], 18))
+    if not tiles:
+        return None
+    w, h = tiles[0].size
+    cols = 2 if len(tiles) > 1 else 1
+    c = Image.new("RGB", (cols * w + 6 * (cols - 1), math.ceil(len(tiles) / cols) * (h + 6)), "black")
+    for i, tl in enumerate(tiles):
+        c.paste(tl, ((i % cols) * (w + 6), (i // cols) * (h + 6)))
+    c.save(path, quality=85)
+    return path
+
+
 def cmd_learn(a, looks):
     """Learn a look from a before/after pair of the same photo (any editor: Lightroom, VSCO...)."""
     b, _ = load_image(a.before)
     t, _ = load_image(a.after)
-    if abs(b.shape[1] / b.shape[0] - t.shape[1] / t.shape[0]) > 0.01:
-        sys.exit("before and after must be the same photo with the same framing (no crop)")
-    b = downsize(b, 1400)
+    ra, rb = t.shape[1] / t.shape[0], b.shape[1] / b.shape[0]
+    if abs(ra - rb) > 0.01:
+        if not a.loose:
+            sys.exit("before and after must have the same framing (use --loose for an AI restyle)")
+        H, W = b.shape[:2]  # centre-crop the original to the restyle's aspect ratio
+        if ra > rb:
+            nh = int(W / ra)
+            b = b[(H - nh) // 2:(H - nh) // 2 + nh]
+        else:
+            nw = int(H * ra)
+            b = b[:, (W - nw) // 2:(W - nw) // 2 + nw]
+    b = downsize(b, 320 if a.loose else 1400)
     t = cv2.resize(t, (b.shape[1], b.shape[0]), interpolation=cv2.INTER_AREA)
+    if a.loose:  # an AI restyle moves details a little: compare colours, not edges
+        b, t = cv2.GaussianBlur(b, (0, 0), 2), cv2.GaussianBlur(t, (0, 0), 2)
     lut = fit_lut(b, t, 33)
     y = apply_lut3d(b, lut)
     log(f"[pgrade] colour fit: error {np.abs(b - t).mean() * 255:.1f} -> {np.abs(y - t).mean() * 255:.1f} (of 255)")
@@ -1179,6 +1337,8 @@ def cmd_learn(a, looks):
         cl = min(range(-20, 81, 10), key=lambda v: err(v, tx))
         tx = min(range(-20, 61, 10), key=lambda v: err(cl, v))
     tx = min(tx, 40)  # stay gentle on skin
+    if a.loose:
+        cl, tx = 0, 0  # detail can't be learned from a blurred, re-drawn image
     od = a.outdir or os.path.expanduser("~/.config/photo-grade/looks")
     os.makedirs(os.path.join(od, "luts"), exist_ok=True)
     write_cube(os.path.join(od, "luts", f"{a.name}.cube"), lut, a.name)
@@ -1210,6 +1370,7 @@ def main():
     s.add_argument("--no-mask", help="comma list of masks to switch off, e.g. sky,skin")
     s.add_argument("--no-ml", action="store_true", help="skip all AI masks")
     s.add_argument("--compare", action="store_true")
+    s.add_argument("--show-masks", dest="show_masks", action="store_true", help="save a preview of every mask the grade used")
     s.add_argument("--format", help="output format: jpg, png, tif (16-bit if source is 16-bit/RAW)")
     s.add_argument("--quality", type=int, default=95)
     s.add_argument("--seed", type=int, default=7)
@@ -1226,12 +1387,20 @@ def main():
     s.add_argument("inputs", nargs="+")
     s.add_argument("--subject", action="store_true", help="also run the subject model")
     s.add_argument("-o", "--outdir")
+    s = sub.add_parser("match", help="copy the colour style of a reference image onto a photo")
+    s.add_argument("photo")
+    s.add_argument("reference")
+    s.add_argument("--name", required=True)
+    s.add_argument("--strength", type=float, default=1.0)
+    s.add_argument("--description")
+    s.add_argument("-o", "--outdir", help="default ~/.config/photo-grade/looks")
     s = sub.add_parser("learn", help="learn a look from a before/after pair of the same photo")
     s.add_argument("before")
     s.add_argument("after")
     s.add_argument("--name", required=True)
     s.add_argument("--description")
     s.add_argument("--best-for", dest="best_for")
+    s.add_argument("--loose", action="store_true", help="AFTER is an AI restyle of BEFORE (details shifted / different crop)")
     s.add_argument("-o", "--outdir", help="default ~/.config/photo-grade/looks")
     s = sub.add_parser("lut")
     s.add_argument("--look", required=True)
@@ -1241,7 +1410,7 @@ def main():
     a = ap.parse_args()
     looks = load_looks()
     {"looks": cmd_looks, "analyze": cmd_analyze, "grade": cmd_grade, "sheet": cmd_sheet,
-     "masks": cmd_masks, "lut": cmd_lut, "learn": cmd_learn}[a.cmd](a, looks)
+     "masks": cmd_masks, "lut": cmd_lut, "learn": cmd_learn, "match": cmd_match}[a.cmd](a, looks)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,38 @@ python3 pgrade.py sheet IMG_1234.jpg                 # one photo in every look, 
 python3 pgrade.py learn raw.jpg my_edit.jpg --name mine   # teach it your own grade
 ```
 
+## Grading like a colourist: recipes
+
+A recipe is a small JSON file for one photo or one series. It holds a base look plus the masked moves that serve what the photo should feel like:
+
+```json
+{"base": "gta6",
+ "intent": "Cinematic dusk: glowing sky gap, neon reflections on the wet street, readable shadows.",
+ "local": [
+   {"mask": "sky", "adjust": {"highlights": -20, "saturation": 12}},
+   {"mask": "grad:bottom:0.35", "adjust": {"exposure": 0.1, "clarity": 12, "saturation": 10}},
+   {"mask": "lum:0-0.25*!sky", "adjust": {"shadows": 15}}],
+ "bloom": {"amount": 0.18, "threshold": 0.75, "radius": 0.02, "tint": [1.0, 0.75, 0.6]}}
+```
+
+```bash
+python3 pgrade.py grade IMG.jpg --look recipe.json --compare --show-masks
+```
+
+`--show-masks` saves a preview of every mask the grade used, so you can check each move hit exactly what you meant. Mask tokens:
+- AI masks: `sky`, `subject`, `background`, `person`, `face`, `skin`, `faceskin`
+- Ranges: `lum:LO-HI`, `hue:LO-HI`
+- Shapes: `grad:top:0.5`, `radial:CX,CY,SIZE`
+
+Combine tokens with `*` and invert one with `!`.
+
+## Style from a reference
+
+The output is always your own photo. A reference only supplies colour.
+- `learn ORIGINAL EDIT --name N`: copies a grade you made yourself on one photo. This is the most accurate option.
+- `learn PHOTO RESTYLE --name N --loose`: copies the colour from an AI restyle of *your* photo. Small shifts in detail and a different crop are fine. The generated image is only used as a colour target.
+- `match PHOTO REFERENCE --name N`: copies the style of a different image, such as a film still or a photo you like. It matches tone and per-zone colour, sky to sky, and keeps skin out of the fit. It works best when the light and content are similar.
+
 ## Looks
 
 | look | what it does | best for |
@@ -54,11 +86,12 @@ It fits a smooth 3D colour LUT, filling in colours the example never contained f
 ```
 pgrade.py analyze IMG...                 scene report + 3 suggested looks (JSON)
 pgrade.py grade   IMG|DIR... [options]   --look NAME|auto|file.json  --strength 0..1.5
-                                         --pop 0..2  --retouch 0..2  --compare  --no-mask sky,skin  --format tif
+                                         --pop 0..2  --retouch 0..2  --compare  --show-masks  --no-mask sky,skin  --format tif
 pgrade.py sheet   IMG [--looks all|suggested|a,b,c]
 pgrade.py masks   IMG [--subject]        preview the AI masks
 pgrade.py looks                          list looks
-pgrade.py learn   BEFORE AFTER --name N learn a look from your own edit of one photo
+pgrade.py learn   BEFORE AFTER --name N learn a look from your own edit (or --loose: an AI restyle) of one photo
+pgrade.py match   PHOTO REF --name N     copy the colour style of a reference image with different content
 pgrade.py lut     --look NAME out.cube   global colour as a 3D LUT (ffmpeg, Resolve, Premiere, CapCut)
 ```
 
