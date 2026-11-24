@@ -1,6 +1,6 @@
 ---
 name: photo-grade
-description: One-step colour grading of the user's photos (JPEG/HEIC/PNG/TIFF/RAW) with 10 looks (GTA VI, cinematic, film, moody, B&W...) and AI sky/skin/subject masks, run from the CLI. Use when asked to grade, edit or restyle photos.
+description: One-step colour grading of the user's photos (JPEG/HEIC/PNG/TIFF/RAW) with 13 looks (Japanese, GTA VI, cinematic, film, B&W...), AI masks and skin retouch, run from the CLI. Use when asked to grade, edit or restyle photos.
 ---
 
 # photo-grade
@@ -28,6 +28,7 @@ PG="python3 $HOME/photo-grade/pgrade.py"
    - For a set from one shoot, use one look for every photo so they match. Use `--look auto` only when the photos are unrelated.
 3. **Grade:** `$PG grade PHOTOS --look NAME -o graded/ --compare`
    - If there is one clear subject (person, car, pet, product), add `--pop 1`. The engine skips it on its own when there is no clear subject.
+   - For portraits and selfies, add `--retouch 1`, or `0.5` for men or for subtle results. It softens skin and lights the face, touching only face skin. The `jp-airy` and `jp-film` looks already include it.
 4. **Check every `*_compare.jpg` before sending.** Fix what you see:
    - Too strong or garish: rerun with `--strength 0.6`–`0.8`.
    - Halo or odd colour along the horizon or rooftops: run `$PG masks PHOTO` and look at the preview. If the sky mask is wrong, add `--no-mask sky`.
@@ -42,6 +43,9 @@ If the user wants to choose, run `$PG sheet PHOTO --looks suggested` (or `all`) 
 | look | for |
 |---|---|
 | `natural` | anything; the clean, safe default |
+| `jp-airy` | portraits and selfies: Japanese airy (透明感), bright, soft, fair skin. The default for faces |
+| `jp-film` | people in the street, everyday life: soft Fuji-film pastels |
+| `jp-summer` | sunny days, sea, trains, blue skies. Learned from the user's own Kamakura edit, so it is strong by design |
 | `gta6` | sunsets, golden hour, warm or neon streets at dusk |
 | `vice-night` | blue hour, night skylines. Use this, not gta6, for these: gta6 only makes a blue sky bluer |
 | `neon-noir` | night streets with neon, rain reflections |
@@ -69,13 +73,15 @@ All keys use the Lightroom scale:
 - **Local adjustments:** `local: [{mask, amount, adjust: {...}}]`
 
 Mask expressions combine tokens with `*` (intersection), and `!` inverts a token. Tokens:
-- `sky`, `person`, `face`, `skin`, `subject`, `background`, `all`
+- `sky`, `person`, `face`, `skin`, `faceskin` (face and neck skin only, for retouching), `subject`, `background`, `all`
 - `lum:0.6-1`, a brightness range
 - `hue:200-280`, an Oklab hue range
 - `grad:top:0.5`, a gradient
 - `radial:0.6`, a centred ellipse
 
 For example, `"sky"` or `"!sky*lum:0-0.4"`.
+
+**Learning a look from the user's own edit:** if they send an original and their edited version of the same photo (same framing), run `$PG learn ORIGINAL EDIT --name NAME`. Look at the `NAME_learn_check.jpg` it writes (original | learned | their edit) before using the look. The look is saved to `~/.config/photo-grade/looks`. It fits colour, clarity and texture. Masked or local edits from their app are only approximated.
 
 **Copying a Lightroom preset from screenshots:** transcribe the sliders 1:1 into these keys and save the file as a new look. Values that Lightroom itself does not allow are ignored, for example a colour-grading blending of 260. Tell the user which sliders the engine lacks; tone curves, vignette and grain are supported.
 
@@ -89,6 +95,8 @@ The LUT holds the global colour only. Masks, clarity, bloom, grain and vignette 
 
 ## Limits
 
-- A 12 MP photo grades in about 13–15 s and peaks at about 2.7 GB of RAM with `--pop` (2.2 GB without). The subject model adds about 3 s.
+- A 12 MP photo grades in about 11–15 s. It takes about 23 s with retouch or the `jp-airy` look, and peaks at about 2.8 GB of RAM. The subject model adds about 3 s.
+- Photos are graded and saved in sRGB. Wide-gamut (Display P3) originals are converted first.
+- Blonde hair right next to the face can be partly included in `faceskin`. Retouching there is gentle.
 - Masks are refined at full resolution, but very thin structures can be partly included in a mask, for example a lit spire against the sky.
 - Auto scene detection is a heuristic. Your own look at the photo wins.

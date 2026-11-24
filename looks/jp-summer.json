@@ -1,0 +1,18 @@
+{
+  "name": "jp-summer",
+  "description": "Japanese summer (learned from the user's Kamakura edit): cyan-teal skies, bright clouds, warm sunlit rails, rich colour, crisp detail.",
+  "best_for": "sunny days, seaside, trains, streets, blue skies, travel in Japan",
+  "learned_from": [
+    "DSC_2281 (original)",
+    "DSC_2281 (user's own edit)"
+  ],
+  "auto": {
+    "exposure": false,
+    "wb": false
+  },
+  "lut": "luts/jp-summer.cube",
+  "clarity": 20,
+  "texture": 40,
+  "protect_skin": 0.85,
+  "sharpness": 20
+}

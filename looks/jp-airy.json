@@ -1,0 +1,124 @@
+{
+  "name": "jp-airy",
+  "description": "Japanese airy portrait (透明感): bright and soft, lifted pastel shadows, cool-clean air, fair luminous skin, mint greens.",
+  "best_for": "portraits, selfies, couples, cafes, flowers, soft daylight, indoor window light",
+  "auto": {
+    "exposure": true,
+    "wb": true
+  },
+  "exposure": 0.25,
+  "contrast": -22,
+  "highlights": -35,
+  "shadows": 35,
+  "whites": -6,
+  "blacks": 14,
+  "temperature": -8,
+  "tint": 4,
+  "vibrance": -4,
+  "saturation": -14,
+  "clarity": -8,
+  "curve": [
+    [
+      0,
+      28
+    ],
+    [
+      64,
+      84
+    ],
+    [
+      128,
+      145
+    ],
+    [
+      192,
+      205
+    ],
+    [
+      255,
+      246
+    ]
+  ],
+  "hsl": {
+    "red": [
+      4,
+      -8,
+      8
+    ],
+    "orange": [
+      -5,
+      -14,
+      14
+    ],
+    "yellow": [
+      -20,
+      -40,
+      10
+    ],
+    "green": [
+      40,
+      -45,
+      12
+    ],
+    "aqua": [
+      -10,
+      -10,
+      10
+    ],
+    "blue": [
+      -15,
+      -22,
+      10
+    ],
+    "purple": [
+      0,
+      -20,
+      0
+    ],
+    "magenta": [
+      0,
+      -15,
+      0
+    ]
+  },
+  "color_grade": {
+    "shadows": [
+      200,
+      16,
+      4
+    ],
+    "midtones": [
+      190,
+      5,
+      0
+    ],
+    "highlights": [
+      40,
+      6,
+      0
+    ]
+  },
+  "grain": {
+    "amount": 8
+  },
+  "protect_skin": 0.25,
+  "sharpness": 15,
+  "local": [
+    {
+      "mask": "faceskin",
+      "adjust": {
+        "exposure": 0.12,
+        "texture": -30,
+        "clarity": -12,
+        "saturation": -6,
+        "hsl": {
+          "orange": [
+            -6,
+            0,
+            0
+          ]
+        }
+      }
+    }
+  ]
+}

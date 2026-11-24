@@ -172,6 +172,103 @@ def guided_color(I, p, r, eps):
     return (A * I).sum(-1) + b
 
 
+# ============================================================== 3D LUTs
+def read_cube(path):
+    n, rows = None, []
+    with open(path) as fh:
+        for line in fh:
+            t = line.strip().split()
+            if not t or t[0].startswith("#"):
+                continue
+            if t[0] == "LUT_3D_SIZE":
+                n = int(t[1])
+            elif len(t) == 3 and t[0][0] in "0123456789.-":
+                rows.append([float(v) for v in t])
+    return np.array(rows, np.float32).reshape(n, n, n, 3)  # indexed [b, g, r]
+
+
+def write_cube(path, lut, title="pgrade"):
+    n = lut.shape[0]
+    with open(path, "w") as fh:
+        fh.write(f'TITLE "{title}"\nLUT_3D_SIZE {n}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n')
+        fh.writelines(f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n" for p in lut.reshape(-1, 3))
+
+
+def apply_lut3d(x, lut, rows=256):
+    n = lut.shape[0]
+    out = np.empty_like(x)
+    for r0 in range(0, x.shape[0], rows):
+        c = np.clip(x[r0:r0 + rows], 0, 1) * (n - 1)
+        i = np.minimum(c.astype(np.int32), n - 2)
+        t = c - i
+        acc = 0
+        for db in (0, 1):
+            wb = t[..., 2] if db else 1 - t[..., 2]
+            for dg in (0, 1):
+                wg = t[..., 1] if dg else 1 - t[..., 1]
+                for dr in (0, 1):
+                    wr = t[..., 0] if dr else 1 - t[..., 0]
+                    acc = acc + (wb * wg * wr)[..., None] * lut[i[..., 2] + db, i[..., 1] + dg, i[..., 0] + dr]
+        out[r0:r0 + rows] = acc
+    return out
+
+
+_LUT_CACHE = {}
+
+
+def st_lut(x, P):
+    path = P.get("lut")
+    if not path:
+        return x
+    if path not in _LUT_CACHE:
+        _LUT_CACHE[path] = read_cube(path)
+    y = apply_lut3d(x, _LUT_CACHE[path])
+    a = P.get("lut_amount", 1.0)
+    return np.clip(x + a * (y - x), 0, 1)
+
+
+def _blur3(v, sigma):
+    r = max(1, int(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    for ax in range(3):
+        pad = [(r, r) if a == ax else (0, 0) for a in range(v.ndim)]
+        vp = np.pad(v, pad, mode="edge")
+        v = sum(k[j] * np.take(vp, range(j, j + v.shape[ax]), axis=ax) for j in range(len(k)))
+    return v
+
+
+def fit_lut(before, after, n=33):
+    """Learn a smooth 3D LUT mapping before -> after (same framing). Colours the photo never
+    contains are filled from progressively wider neighbourhoods, so the LUT stays smooth."""
+    x, d = before.reshape(-1, 3), (after - before).reshape(-1, 3)
+    f = np.clip(x, 0, 1) * (n - 1)
+    i0 = np.minimum(f.astype(np.int32), n - 2)
+    t = f - i0
+    W = np.zeros(n ** 3)
+    A = np.zeros((n ** 3, 3))
+    for db in (0, 1):
+        for dg in (0, 1):
+            for dr in (0, 1):
+                w = ((t[:, 2] if db else 1 - t[:, 2]) * (t[:, 1] if dg else 1 - t[:, 1]) * (t[:, 0] if dr else 1 - t[:, 0]))
+                idx = (i0[:, 0] + dr) + n * (i0[:, 1] + dg) + n * n * (i0[:, 2] + db)
+                W += np.bincount(idx, w, n ** 3)
+                for c in range(3):
+                    A[:, c] += np.bincount(idx, w * d[:, c], n ** 3)
+    W, A = W.reshape(n, n, n), A.reshape(n, n, n, 3)
+    res, done = np.zeros_like(A), np.zeros((n, n, n), bool)
+    for sigma in (0.8, 1.6, 3.2, 6.4, 12.8, 40.0):
+        Ws, As = _blur3(W, sigma), _blur3(A, sigma)
+        est = As / np.maximum(Ws, 1e-9)[..., None]
+        take = ~done & (Ws > 2.0 if sigma < 40 else ~done)
+        res[take] = est[take]
+        done |= take
+    res = _blur3(res, 0.7)
+    g = np.linspace(0, 1, n, dtype=np.float32)
+    bb, gg, rr = np.meshgrid(g, g, g, indexing="ij")
+    return np.clip(np.stack([rr, gg, bb], -1) + res, 0, 1).astype(np.float32)
+
+
 # ================================================================ tone stages
 TONE_KEYS = ("contrast", "highlights", "shadows", "whites", "blacks")
 K_TONE, K_HIGHLIGHTS, K_WHITES, K_CONTRAST = 0.30, 0.22, 0.60, 0.80
@@ -506,25 +603,45 @@ class Scene:
         p = e[1] / e.sum(0)
         return np.maximum(self._refine(p, r_div=60), self.proxy_mask("face"))
 
+    def _facezone(self, sx, sy=None, dy=0.6):
+        sy = sx if sy is None else sy
+        m = np.zeros((self.ph, self.pw), np.float32)
+        for x, y, w, h, _ in self.faces():
+            cv2.ellipse(m, (int(x + w / 2), int(y + h * dy)), (int(w * 0.5 * sx), int(h * 0.62 * sy)), 0, 0, 360, 1.0, -1)
+        return cv2.GaussianBlur(m, (0, 0), max(2, min(self.pw, self.ph) / 150)) if m.any() else m
+
     def _skin(self):
+        """Skin = colour model sampled from the detected faces (lightness + colour, so brown hair and
+        warm fabrics are rejected), restricted to the people in the photo."""
         faces = self.faces()
         if not faces:
             return np.zeros((self.ph, self.pw), np.float32)
         lab = to_oklab(self.px)
         samp = np.zeros((self.ph, self.pw), np.uint8)
         for x, y, w, h, _ in faces:
-            cv2.ellipse(samp, (int(x + w / 2), int(y + h * 0.58)), (max(1, int(w * 0.28)), max(1, int(h * 0.3))), 0, 0, 360, 1, -1)
+            cv2.ellipse(samp, (int(x + w / 2), int(y + h * 0.6)), (max(1, int(w * 0.26)), max(1, int(h * 0.26))), 0, 0, 360, 1, -1)
         sel = (samp > 0) & (lab[..., 0] > 0.3) & (lab[..., 0] < 0.97)
         if sel.sum() < 20:
             return self.proxy_mask("face")
-        ab = lab[..., 1:][sel]
-        mu, cov = ab.mean(0), np.cov(ab.T) + np.eye(2) * 2e-5
-        d = lab[..., 1:] - mu
-        ic = np.linalg.inv(cov)
-        d2 = np.einsum("...i,ij,...j->...", d, ic, d)
-        p = np.clip(1 - (np.sqrt(d2) - 2.0) / 2.0, 0, 1) * smoothstep(0.15, 0.3, lab[..., 0])
-        gate = cv2.dilate(self.proxy_mask("person"), np.ones((9, 9), np.uint8))
-        return self._refine(p * np.maximum(gate, self.proxy_mask("face")), r_div=150, lo=0.2, hi=0.8)
+        v = lab[sel]
+        mu = np.median(v, 0)
+        cov = np.cov(v.T) + np.diag([4e-4, 2e-5, 2e-5])
+        cov[0, 0] *= 4.0  # allow light and shadow on the same skin
+        d = lab - mu
+        d2 = np.einsum("...i,ij,...j->...", d, np.linalg.inv(cov), d)
+        p = np.clip(1 - (np.sqrt(d2) - 2.2) / 1.8, 0, 1)
+        L = lab[..., 0]
+        r = max(1, round(min(self.pw, self.ph) / 400))
+        sd = np.sqrt(np.maximum(box(L * L, r) - box(L, r) ** 2, 0))
+        p *= 1 - smoothstep(0.03, 0.07, sd)
+        person = cv2.dilate(self.proxy_mask("person"), np.ones((5, 5), np.uint8))
+        gate = np.maximum(person, self._facezone(1.0)) if person.mean() > 0.005 else self._facezone(1.6)
+        return self._refine(p * np.clip(gate, 0, 1), r_div=150, lo=0.25, hi=0.75)
+
+    def _faceskin(self):
+        """Skin on and right around faces only: what retouching should touch."""
+        zone = np.clip(self._facezone(1.12, 1.3, 0.68) * 1.5, 0, 1)  # face width, extended down to the neck
+        return self.proxy_mask("skin") * zone
 
     def _subject(self):
         x = cv2.resize(self.pu8, (1024, 1024), interpolation=cv2.INTER_AREA).astype(np.float32)
@@ -535,7 +652,7 @@ class Scene:
         return self._refine(o, r_div=120, lo=0.35, hi=0.65)
 
     # ---- mask access -----------------------------------------------------
-    NAMES = ("sky", "person", "face", "skin", "subject")
+    NAMES = ("sky", "person", "face", "skin", "faceskin", "subject")
 
     def proxy_mask(self, name):
         if name not in self._p:
@@ -631,6 +748,8 @@ class Scene:
             sel = sky > 0.5
             warm = (np.abs(angdiff(hue[sel], 65)) < 50) & (C[sel] > 0.035)
             s["sky"]["warm_fraction"] = float(warm.mean()) if sel.any() else 0.0
+        neutral = (C < 0.07) & (L > 0.45) & (sky < 0.5)  # warm LIGHT shows up on whites and greys
+        s["warm_neutrals"] = float(lab[..., 2][neutral].mean()) if neutral.mean() > 0.02 else 0.0
         bright = (L > 0.6) & (sky < 0.5)
         s["warm_highlights"] = float(lab[..., 2][bright].mean()) if bright.mean() > 0.005 else 0.0
         lights = (L > 0.55) & (C > 0.09)
@@ -653,6 +772,8 @@ def classify(s):
         scene = "blue_hour"
     elif ground_dark:
         scene = "night_neon" if s["neon_fraction"] > 0.004 else "night"
+    elif s["face_area"] > 0.003:
+        scene = "people"
     elif sky and sky["chroma"] < 0.035 and sky["lightness"] > 0.55 and s["sky_fraction"] > 0.08 \
             and s["warm_highlights"] < 0.035 and s["mean_chroma"] < 0.035:  # grey sky AND a grey scene
         scene = "overcast"
@@ -660,18 +781,19 @@ def classify(s):
         scene = "daylight"
     elif False:
         scene = "daylight"
-    elif s["warm_highlights"] > 0.05:
+    elif s["warm_highlights"] > 0.05 and s.get("warm_neutrals", 0) > 0.02:
         scene = "golden_hour"
     else:
         scene = "other"
-    looks = {"portrait": ["film-warm", "natural", "classic-chrome"],
+    looks = {"portrait": ["jp-airy", "film-warm", "jp-film"],
              "golden_hour": ["gta6", "golden", "teal-orange"],
              "blue_hour": ["vice-night", "neon-noir", "teal-orange"],
              "night_neon": ["neon-noir", "vice-night", "gta6"],
              "night": ["vice-night", "neon-noir", "moody"],
              "overcast": ["moody", "classic-chrome", "bw"],
-             "daylight": ["teal-orange", "natural", "golden"],
-             "other": ["natural", "film-warm", "classic-chrome"]}[scene]
+             "daylight": ["jp-summer", "teal-orange", "natural"],
+             "people": ["jp-film", "natural", "film-warm"],
+             "other": ["natural", "jp-film", "classic-chrome"]}[scene]
     return scene, looks
 
 
@@ -689,6 +811,8 @@ def load_looks():
         for f in sorted(glob.glob(os.path.join(d, "*.json"))):
             with open(f) as fh:
                 j = json.load(fh)
+            if j.get("lut") and not os.path.isabs(j["lut"]):
+                j["lut"] = os.path.join(os.path.dirname(os.path.abspath(f)), j["lut"])
             raw[j.get("name", os.path.splitext(os.path.basename(f))[0])] = j
     out = {}
 
@@ -711,6 +835,8 @@ def get_look(name, looks):
     if name and os.path.isfile(name):
         with open(name) as fh:
             j = json.load(fh)
+        if j.get("lut") and not os.path.isabs(j["lut"]):
+            j["lut"] = os.path.join(os.path.dirname(os.path.abspath(name)), j["lut"])
         return deep_merge(looks[j["base"]], j) if j.get("base") in looks else j
     if name not in looks:
         sys.exit(f"unknown look '{name}'. Available: {', '.join(sorted(looks))}")
@@ -729,7 +855,7 @@ def auto_params(scene, look):
             ev *= 0.5
     if A.get("wb"):
         keep = s["scene"] in ("golden_hour", "night", "night_neon", "blue_hour")
-        f = 0.15 if keep else 0.6
+        f = 0.15 if keep else (0.3 if s["scene"] == "portrait" else 0.6)  # flattering skin beats neutral grey
         lab = to_oklab(scene.px)
         L = lab[..., 0]
         g = (np.hypot(lab[..., 1], lab[..., 2]) < 0.05) & (L > 0.3) & (L < 0.92)
@@ -746,11 +872,12 @@ def develop(x, P, scene=None):
     x = st_dehaze(x, P.get("dehaze", 0))
     x = st_tone(x, P)
     x = st_curves(x, P)
+    x = st_lut(x, P)
     x = st_local_contrast(x, P.get("clarity", 0), P.get("texture", 0))
     return st_color(x, P)
 
 
-def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7):
+def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7, retouch=0.0):
     P = copy.deepcopy(look)
     ev, gains = (0.0, None) if pointwise else auto_params(scene, look)
     P["exposure"] = P.get("exposure", 0) + ev
@@ -761,6 +888,8 @@ def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7):
     x = develop(st_chroma_denoise(img, P.get("color_denoise", 0.8)) if not pointwise else img, P)
     if not pointwise:
         locs = list(P.get("local", []))
+        if retouch:
+            locs += [{"mask": "faceskin", "adjust": {"texture": -30 * retouch, "clarity": -12 * retouch, "exposure": 0.06 * retouch}}]
         if pop and not (0.004 < scene.proxy_mask("subject").mean() < 0.75):
             log("[pgrade] no clear subject found -> --pop skipped")
             pop = 0
@@ -807,7 +936,10 @@ def load_image(path):
         import pillow_heif
         pillow_heif.register_heif_opener()
     im = ImageOps.exif_transpose(Image.open(path))
-    meta["icc"] = im.info.get("icc_profile")
+    icc = im.info.get("icc_profile")
+    if icc and im.mode in ("RGB", "RGBA"):
+        im = to_srgb(im, icc)  # grade in sRGB so every look behaves the same on every camera
+    meta["icc"] = SRGB_ICC
     try:
         ex = im.getexif()
         if 0x0112 in ex:
@@ -818,6 +950,33 @@ def load_image(path):
     if im.mode in ("RGBA", "LA", "PA"):
         meta["alpha"] = im.getchannel("A")
     return np.asarray(im.convert("RGB"), np.float32) / 255, meta
+
+
+def _srgb_icc():
+    from PIL import ImageCms
+    return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+SRGB_ICC = _srgb_icc()
+
+
+def to_srgb(im, icc):
+    """Convert an image with an embedded profile (e.g. iPhone Display P3) to sRGB."""
+    import io
+    from PIL import ImageCms
+    try:
+        src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        if "srgb" in (ImageCms.getProfileDescription(src) or "").lower():
+            return im
+        alpha = im.getchannel("A") if im.mode == "RGBA" else None
+        out = ImageCms.profileToProfile(im.convert("RGB"), src, ImageCms.createProfile("sRGB"),
+                                        renderingIntent=ImageCms.Intent.PERCEPTUAL, outputMode="RGB")
+        if alpha is not None:
+            out.putalpha(alpha)
+        return out
+    except Exception as e:
+        log(f"[pgrade] colour profile not converted ({e}); treating as sRGB")
+        return im
 
 
 def save_image(path, x, meta, quality=95):
@@ -912,7 +1071,7 @@ def cmd_grade(a, looks):
             name = scene.stats()["suggested_looks"][0]
             log(f"[pgrade] {os.path.basename(f)}: scene={scene.stats()['scene']} -> look={name}")
         look = get_look(name, looks)
-        x = grade(img, look, scene, a.strength, a.pop, seed=a.seed)
+        x = grade(img, look, scene, a.strength, a.pop, seed=a.seed, retouch=a.retouch)
         stem = os.path.splitext(os.path.basename(f))[0]
         tag = os.path.splitext(os.path.basename(name))[0]
         ext = meta["ext"] if meta["ext"] in (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp") else ".jpg"
@@ -956,7 +1115,8 @@ def cmd_sheet(a, looks):
 
 
 def cmd_masks(a, looks):
-    cols = {"sky": (60, 140, 255), "person": (40, 220, 90), "skin": (255, 150, 40), "subject": (240, 60, 200)}
+    cols = {"sky": (60, 140, 255), "person": (40, 220, 90), "skin": (255, 150, 40), "faceskin": (255, 230, 60),
+            "subject": (240, 60, 200)}
     for f in collect(a.inputs):
         img, _ = load_image(f)
         scene = Scene(downsize(img, PROXY))
@@ -986,11 +1146,44 @@ def cmd_lut(a, looks):
     idx = np.linspace(0, 1, n, dtype=np.float32)
     b, g, r = np.meshgrid(idx, idx, idx, indexing="ij")
     grid = np.stack([r.ravel(), g.ravel(), b.ravel()], -1).reshape(n * n, n, 3)
-    out = grade(grid, get_look(a.look, looks), None, a.strength, pointwise=True).reshape(-1, 3)
-    with open(a.out, "w") as fh:
-        fh.write(f'TITLE "{a.look}"\nLUT_3D_SIZE {n}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n')
-        fh.writelines(f"{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}\n" for p in out)
+    out = grade(grid, get_look(a.look, looks), None, a.strength, pointwise=True)
+    write_cube(a.out, out.reshape(n, n, n, 3), a.look)
     print(a.out, "(global colour only: masks, clarity, dehaze, bloom, grain and vignette are not in a LUT)")
+
+
+def cmd_learn(a, looks):
+    """Learn a look from a before/after pair of the same photo (any editor: Lightroom, VSCO...)."""
+    b, _ = load_image(a.before)
+    t, _ = load_image(a.after)
+    if abs(b.shape[1] / b.shape[0] - t.shape[1] / t.shape[0]) > 0.01:
+        sys.exit("before and after must be the same photo with the same framing (no crop)")
+    b = downsize(b, 1400)
+    t = cv2.resize(t, (b.shape[1], b.shape[0]), interpolation=cv2.INTER_AREA)
+    lut = fit_lut(b, t, 33)
+    y = apply_lut3d(b, lut)
+    log(f"[pgrade] colour fit: error {np.abs(b - t).mean() * 255:.1f} -> {np.abs(y - t).mean() * 255:.1f} (of 255)")
+    bs, ts = downsize(b, 900), downsize(t, 900)
+    ys = apply_lut3d(bs, lut)
+    err = lambda cl, tx: np.abs(st_local_contrast(ys.copy(), cl, tx) - ts).mean()
+    cl, tx = 0, 0
+    for _ in range(2):  # coordinate search for local contrast the LUT can't express
+        cl = min(range(-20, 81, 10), key=lambda v: err(v, tx))
+        tx = min(range(-20, 61, 10), key=lambda v: err(cl, v))
+    tx = min(tx, 40)  # stay gentle on skin
+    od = a.outdir or os.path.expanduser("~/.config/photo-grade/looks")
+    os.makedirs(os.path.join(od, "luts"), exist_ok=True)
+    write_cube(os.path.join(od, "luts", f"{a.name}.cube"), lut, a.name)
+    look = {"name": a.name, "description": a.description or f"Learned from {os.path.basename(a.after)}.",
+            "best_for": a.best_for or "photos similar to the example it was learned from",
+            "learned_from": [os.path.basename(a.before), os.path.basename(a.after)],
+            "auto": {"exposure": False, "wb": False}, "lut": f"luts/{a.name}.cube",
+            "clarity": cl, "texture": tx, "protect_skin": 0.6, "sharpness": 20}
+    with open(os.path.join(od, f"{a.name}.json"), "w") as fh:
+        json.dump(look, fh, indent=2)
+    chk = np.concatenate([b, st_local_contrast(y, cl, tx), t], 1)
+    cpath = os.path.join(od, f"{a.name}_learn_check.jpg")
+    label(to_pil(downsize(chk, 2400)), "before | learned | your edit").save(cpath, quality=88)
+    print(f"{os.path.join(od, a.name + '.json')}\tclarity={cl} texture={tx}\n{cpath}")
 
 
 def main():
@@ -1004,6 +1197,7 @@ def main():
     s.add_argument("--look", "-l", default="auto", help="look name, path to a look .json, or auto")
     s.add_argument("--strength", "-s", type=float, default=1.0)
     s.add_argument("--pop", type=float, default=0.0, help="subject pop 0..2 (needs the 170 MB subject model)")
+    s.add_argument("--retouch", type=float, default=0.0, help="skin smoothing + face light 0..2 (faces only)")
     s.add_argument("--no-mask", help="comma list of masks to switch off, e.g. sky,skin")
     s.add_argument("--no-ml", action="store_true", help="skip all AI masks")
     s.add_argument("--compare", action="store_true")
@@ -1023,6 +1217,13 @@ def main():
     s.add_argument("inputs", nargs="+")
     s.add_argument("--subject", action="store_true", help="also run the subject model")
     s.add_argument("-o", "--outdir")
+    s = sub.add_parser("learn", help="learn a look from a before/after pair of the same photo")
+    s.add_argument("before")
+    s.add_argument("after")
+    s.add_argument("--name", required=True)
+    s.add_argument("--description")
+    s.add_argument("--best-for", dest="best_for")
+    s.add_argument("-o", "--outdir", help="default ~/.config/photo-grade/looks")
     s = sub.add_parser("lut")
     s.add_argument("--look", required=True)
     s.add_argument("out")
@@ -1031,7 +1232,7 @@ def main():
     a = ap.parse_args()
     looks = load_looks()
     {"looks": cmd_looks, "analyze": cmd_analyze, "grade": cmd_grade, "sheet": cmd_sheet,
-     "masks": cmd_masks, "lut": cmd_lut}[a.cmd](a, looks)
+     "masks": cmd_masks, "lut": cmd_lut, "learn": cmd_learn}[a.cmd](a, looks)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,115 @@
+{
+  "name": "jp-film",
+  "description": "Japanese film (Fuji 400H / Superia feel): soft pastel tones, green-cyan shadows, rosy highlights, gentle grain.",
+  "best_for": "portraits outdoors, street, everyday life, travel, parks, summer",
+  "auto": {
+    "exposure": true,
+    "wb": true
+  },
+  "exposure": 0.15,
+  "contrast": -6,
+  "highlights": -35,
+  "shadows": 20,
+  "whites": -4,
+  "blacks": 8,
+  "temperature": -3,
+  "tint": -4,
+  "vibrance": 4,
+  "saturation": -10,
+  "curve": [
+    [
+      0,
+      18
+    ],
+    [
+      64,
+      66
+    ],
+    [
+      128,
+      130
+    ],
+    [
+      192,
+      196
+    ],
+    [
+      255,
+      248
+    ]
+  ],
+  "hsl": {
+    "red": [
+      4,
+      -6,
+      0
+    ],
+    "orange": [
+      -3,
+      -6,
+      8
+    ],
+    "yellow": [
+      -15,
+      -25,
+      0
+    ],
+    "green": [
+      30,
+      -25,
+      0
+    ],
+    "aqua": [
+      -5,
+      0,
+      0
+    ],
+    "blue": [
+      -10,
+      -15,
+      5
+    ],
+    "purple": [
+      0,
+      -15,
+      0
+    ],
+    "magenta": [
+      0,
+      -12,
+      0
+    ]
+  },
+  "color_grade": {
+    "shadows": [
+      175,
+      20,
+      0
+    ],
+    "midtones": [
+      160,
+      5,
+      0
+    ],
+    "highlights": [
+      20,
+      10,
+      0
+    ]
+  },
+  "grain": {
+    "amount": 18,
+    "size": 1.3
+  },
+  "protect_skin": 0.45,
+  "sharpness": 20,
+  "local": [
+    {
+      "mask": "faceskin",
+      "adjust": {
+        "exposure": 0.06,
+        "texture": -15
+      }
+    }
+  ]
+}
