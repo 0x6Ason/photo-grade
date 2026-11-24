@@ -510,19 +510,28 @@ def st_chroma_denoise(x, amount=1.0):
     return oklab_to_srgb(lab)
 
 
-def st_protect_skin(x, ref, m, k):
+def st_protect_skin(x, ref, m, k, orig=None):
     """Keep graded tone, but pull skin hue/chroma back toward natural."""
-    if m is None or k <= 0 or m.max() < 0.05:
+    if m is None or m.max() < 0.05:
         return x
     ys, xs = np.where(m > 0.02)
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     lx, lr = to_oklab(x[y0:y1, x0:x1]), to_oklab(ref[y0:y1, x0:x1])
+    lo = lr if orig is None else to_oklab(orig[y0:y1, x0:x1])
     w = (k * m[y0:y1, x0:x1])
     hx, hr = np.degrees(np.arctan2(lx[..., 2], lx[..., 1])), np.degrees(np.arctan2(lr[..., 2], lr[..., 1]))
     Cx, Cr = np.hypot(lx[..., 1], lx[..., 2]), np.hypot(lr[..., 1], lr[..., 2])
     h = np.radians(hx + w * angdiff(hr, hx))
     C = Cx + w * (np.clip(Cx, Cr * 0.85, Cr * 1.2) - Cx)
     lx[..., 1], lx[..., 2] = C * np.cos(h), C * np.sin(h)
+    # keep the person's real skin tone: a look may light, shade or tint a face, but only so far
+    mm = m[y0:y1, x0:x1]
+    dL = lx[..., 0] - lo[..., 0]  # measured against the original photo, auto-exposure included
+    lx[..., 0] = lo[..., 0] + dL + mm * (np.clip(dL, -0.07, 0.06) - dL)
+    Co, Cn = np.hypot(lo[..., 1], lo[..., 2]), np.hypot(lx[..., 1], lx[..., 2])
+    f = 1 + mm * (np.clip(Cn, Co * 0.85, Co * 1.25) / np.maximum(Cn, 1e-6) - 1)  # no ashy or orange skin
+    lx[..., 1] *= f
+    lx[..., 2] *= f
     out = x.copy()
     out[y0:y1, x0:x1] = oklab_to_srgb(lx)
     return out
@@ -902,8 +911,8 @@ def grade(img, look, scene, strength=1.0, pop=0.0, pointwise=False, seed=7, reto
                 continue
             y = develop(x, loc["adjust"])
             x = x + m[..., None] * (y - x)
-        if P.get("protect_skin"):
-            x = st_protect_skin(x, ref, scene.mask("skin") if scene.faces() else None, P["protect_skin"])
+        if scene.faces():
+            x = st_protect_skin(x, ref, scene.mask("skin"), P.get("protect_skin", 0.0), orig=img)
         x = st_bloom(x, P.get("bloom"))
         x = st_vignette(x, P.get("vignette"))
         x = st_grain(x, P.get("grain"), seed)

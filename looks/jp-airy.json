@@ -107,17 +107,9 @@
     {
       "mask": "faceskin",
       "adjust": {
-        "exposure": 0.12,
+        "exposure": 0.08,
         "texture": -30,
-        "clarity": -12,
-        "saturation": -6,
-        "hsl": {
-          "orange": [
-            -6,
-            0,
-            0
-          ]
-        }
+        "clarity": -12
       }
     }
   ]
